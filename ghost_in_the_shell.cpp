@@ -33,7 +33,7 @@ typedef struct Factory {
     int owner;
     int cyborgs;
     int production;
-    int unused;
+    int no_turns_till_production;
     int unused2;
  } factory;
 
@@ -54,6 +54,22 @@ bool factory_belongs_to(vector<factory> factory_list, int id)
     //return ( find(factory_list.begin(), factory_list.end(), [id](Factory fac){ return fac.id == id;}) != factory_list.begin());
 }
 
+
+int number_of_troops_heading_to_destination_from_owner(vector<troop> cyborgs, int destination_id, eOwner ownedby)
+{
+    int count = 0;
+
+    for (auto borg : cyborgs)
+    {
+        if (( borg.owner == ownedby) && (borg.targetFactory == destination_id ) )
+        {
+            count+=borg.numOfCyborgs;
+        }
+    }
+
+    return 0;
+}
+
 std::optional<factory> get_facoroty_by_id(vector<factory> factory_list, int id)
 {
     for (auto fact : factory_list) {
@@ -63,26 +79,29 @@ std::optional<factory> get_facoroty_by_id(vector<factory> factory_list, int id)
     return {};
 }
 
-links get_link_from_src_dest(int src, int dest, vector<links> all_links)
+std::optional<links> get_link_from_src_dest(int src, int dest, vector<links> all_links)
 {
-    links ret_val;
     for (auto lnk : all_links){
         if ((lnk.factory1 == src) && (lnk.factory2 == dest))
         {
-            ret_val = lnk;
+            return lnk;
         }
         if ((lnk.factory1 == dest) && (lnk.factory2 == src))
         {
-            ret_val = lnk;
+            return lnk;
         }
 
     }
-    return ret_val;
+    return {};
 }
 
+
 //TOTO: Multi moves arent handled correctly
-//TODO: Increase manufacurer not handled correctly
+//TODO: If borgs en-route to capture and enough stop sending them there. 
+//TOTO: if 
 //any base with more than 20 cyborgs has to move them or consume them, so not bomb target
+
+
 
 int main()
 {
@@ -152,18 +171,17 @@ int main()
                 cerr << my_fact.cyborgs <<endl;
 
             }
-            if ((( my_fact.production < 1) && (my_fact.cyborgs > 10)) || ((my_factories.size() == 1) && ( my_fact.production < 2 )) )
+            if ((( my_fact.production < 2) && (my_fact.cyborgs > 10)) || ((my_factories.size() == 1) && ( my_fact.production < 2 )) )
             {
                 upgrade = ";INC " + to_string(my_fact.id);
                 my_fact.cyborgs -= 10;
             }
-            if ((my_fact.cyborgs > 20 ) && ( my_fact.production < 3 ))
+            else if ((my_fact.cyborgs > 20 ) && ( my_fact.production < 3 ))
             {
                 upgrade += ";INC " + to_string(my_fact.id);
                 my_fact.cyborgs -= 10;
             }
         }
-
 
         vector<int> destination_list;
         for(auto f_link : factory_links) {
@@ -177,32 +195,44 @@ int main()
 
         int best_production = 0;
         int nme_best_production = 0;
-        //Only ever target two
+
         factory destination = {-1,-1,-1,-1};
-        factory destination2 = {-1,-1,-1,-1};
+        string move = "";
         string bomb = "";
+        links bad = {-1,-1,21};
         int short_opt;
         for (auto dest : destination_list)
         {
             factory potential = get_facoroty_by_id(nm_factories,dest).value_or(source);
+            int potential_distance = get_link_from_src_dest(source.id, potential.id, factory_links).value_or(bad).distance;
 
-            cerr << "id:" << potential.id <<" " << potential.owner <<" "  <<potential.production <<" " <<potential.cyborgs << " " << bombs <<" " << bomb_counter << endl;
+//This now hadnles not over sending.
+            if ( (potential.owner == eOwner_neutral) 
+            && (source.cyborgs>potential.cyborgs) && (number_of_troops_heading_to_destination_from_owner(vec_troop, potential.id, eOwner_me) < potential.cyborgs))
+            {
+                move += ";MOVE " + to_string(source.id) + " " +  to_string(potential.id) + " " + to_string(potential.cyborgs+1);
+                source.cyborgs -=potential.cyborgs+1;
+            }
+
             if ((potential.owner == eOwner_opponent) && (potential.production > 1) && (potential.cyborgs > 16) 
                 && (bombs > 0) && (bomb_counter < 1) )
             {
                 bomb = ";BOMB " + to_string(source.id) + " " + to_string(potential.id);
-                bomb_counter = get_link_from_src_dest(source.id, potential.id, factory_links).distance+5;
+                bomb_counter = potential_distance+5;
             }
 
-            if (source.cyborgs < potential.cyborgs)
-                continue;
+//            if (source.cyborgs < potential.cyborgs)
+//               continue;
 
-            if ((potential.production ==  best_production) && (potential.owner == eOwner_neutral )){
-                best_production = potential.production;
-                destination = potential;
+            if ((potential.production == best_production) && (potential.owner == eOwner_neutral )){
+                if (potential_distance < get_link_from_src_dest(source.id, destination.id, factory_links).value_or(bad).distance )
+                {
+                    best_production = potential.production;
+                    destination = potential;
+                }
             }
-            if (potential.production ==  best_production) {
-                if (get_link_from_src_dest(source.id, potential.id, factory_links).distance < get_link_from_src_dest(source.id, destination.id, factory_links).distance )
+            else if (potential.production == best_production) {
+                if (potential_distance < get_link_from_src_dest(source.id, destination.id, factory_links).value_or(bad).distance )
                 {
                     best_production = potential.production;
                     destination = potential;
@@ -213,10 +243,6 @@ int main()
                 destination = potential;
             }
 
-            if ( (potential.owner == eOwner_neutral) && (potential.production == 0))
-            {
-                destination2 = potential;
-            }
 
             //BEST DOESN'T HANDLE IF TARGET IS CONNECTED TO LAST ENEMY LOCATION
         }
@@ -227,22 +253,13 @@ int main()
             cout << "WAIT";
             //See if we can upgrade any factories rather than waste a turn waiting. 
         else if (source.cyborgs > 20) {
-            cout << "MOVE " << source.id << " " << destination.id << " " << floor(source.cyborgs *.08);
+            cout << "MOVE " << source.id << " " << destination.id << " " << floor(source.cyborgs *.80);
         }
-        else if (destination2.id != -1) {
-            cout << "MOVE " << source.id 
-                 << " " << destination.id 
-                 << " " << 3
-                 << ";MOVE " << source.id 
-                 << " " << destination2.id 
-                 << " " << 1;
-        }
-        
         else {
-            cout << "MOVE " << source.id << " " << destination.id << " " << 3;
+            cout << "MOVE " << source.id << " " << destination.id << " " << ((source.production>2)?source.production:source.production-1);
         }
         
-        cout << bomb << upgrade << endl;
+        cout << move <<  bomb << upgrade << endl;
         bomb_counter--;
     }
 }
