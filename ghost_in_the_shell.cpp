@@ -43,6 +43,13 @@ typedef struct Links {
     int distance;
 } links;
 
+typedef struct Bomb {
+    int owner;
+    int launch_id;
+    int target_id;
+    int turns_till_boom;
+    int unused;
+}bomb;
 
 bool factory_belongs_to(vector<factory> factory_list, int id)
 {
@@ -95,7 +102,15 @@ std::optional<links> get_link_from_src_dest(int src, int dest, vector<links> all
     return {};
 }
 
-
+bool bomb_on_way_to(int destination, vector<bomb> bombs)
+{
+    for (auto b :bombs)
+    {
+        if ( b.target_id == destination )
+            return true;
+    }
+    return false;
+}
 //TOTO: Multi moves arent handled correctly
 //TODO: If borgs en-route to capture and enough stop sending them there. 
 //TOTO: if 
@@ -126,6 +141,7 @@ int main()
         vector<factory> nm_factories;
         vector<factory> nt_factories;
         vector<troop> vec_troop;
+        vector<bomb> vec_bombs;
         cerr << "bombs left: " << bombs << " cntr" << bomb_counter << endl;
 
         int entityCount; // the number of entities (e.g. factories and troops)
@@ -155,6 +171,8 @@ int main()
                 }
             else if ( entityType == "TROOP" ) 
                 vec_troop.push_back({entityId,arg1,arg2,arg3,arg4,arg5});
+            else if ( entityType == "BOMB" ) 
+                vec_bombs.push_back({arg1,arg2,arg3,arg4,arg5});
             else
                 cerr << "Weird state for entiry, did i make a mistake" << endl;
         }
@@ -164,23 +182,24 @@ int main()
         string upgrade = "";
 
         for (auto my_fact : my_factories) {      
-            if ( my_fact.cyborgs > most_cyborgs )
+            if ((( my_fact.production < 2) && (my_fact.cyborgs > 10)) || ((my_factories.size() == 1) && ( my_fact.production < 2 )) )
+            {
+                upgrade = ";INC " + to_string(my_fact.id);
+                my_fact.cyborgs -= 10;
+            }
+            else if ((my_fact.cyborgs > 15 ) && ( my_fact.production < 3 ))
+            {
+                upgrade += ";INC " + to_string(my_fact.id);
+                my_fact.cyborgs -= 10;
+            }
+            else if ( my_fact.cyborgs > most_cyborgs )
             {
                 most_cyborgs = my_fact.cyborgs;
                 source = my_fact;
                 cerr << my_fact.cyborgs <<endl;
 
             }
-            if ((( my_fact.production < 2) && (my_fact.cyborgs > 10)) || ((my_factories.size() == 1) && ( my_fact.production < 2 )) )
-            {
-                upgrade = ";INC " + to_string(my_fact.id);
-                my_fact.cyborgs -= 10;
-            }
-            else if ((my_fact.cyborgs > 20 ) && ( my_fact.production < 3 ))
-            {
-                upgrade += ";INC " + to_string(my_fact.id);
-                my_fact.cyborgs -= 10;
-            }
+
         }
 
         vector<int> destination_list;
@@ -214,44 +233,43 @@ int main()
                 source.cyborgs -=potential.cyborgs+1;
             }
 
-            if ((potential.owner == eOwner_opponent) && (potential.production > 1) && (potential.cyborgs > 16) 
-                && (bombs > 0) && (bomb_counter < 1) )
+//IDEA: Just get bombs out as early as possible. Early game lead
+            if ((potential.owner == eOwner_opponent) && (potential.production > 2) && 
+                (bombs > 0) && (potential.no_turns_till_production == 0) && !bomb_on_way_to(potential.id, vec_bombs))
+                // && (potential.cyborgs > 10) 
             {
                 bomb = ";BOMB " + to_string(source.id) + " " + to_string(potential.id);
                 bomb_counter = potential_distance+5;
             }
 
-//            if (source.cyborgs < potential.cyborgs)
-//               continue;
-
-            if ((potential.production == best_production) && (potential.owner == eOwner_neutral )){
-                if (potential_distance < get_link_from_src_dest(source.id, destination.id, factory_links).value_or(bad).distance )
-                {
+            if (number_of_troops_heading_to_destination_from_owner(vec_troop, potential.id, eOwner_me) < potential.cyborgs+number_of_troops_heading_to_destination_from_owner(vec_troop, potential.id, eOwner_opponent) ) {
+                if ((potential.production == best_production) && (potential.owner == eOwner_neutral )){
+                    if (potential_distance < get_link_from_src_dest(source.id, destination.id, factory_links).value_or(bad).distance )
+                    {
+                        best_production = potential.production;
+                        destination = potential;
+                    }
+                }
+                else if (potential.production == best_production) {
+                    if ((potential_distance < get_link_from_src_dest(source.id, destination.id, factory_links).value_or(bad).distance ) )
+                    {
+                        best_production = potential.production;
+                        destination = potential;
+                    }
+                }
+                if (potential.production > best_production) {
                     best_production = potential.production;
                     destination = potential;
                 }
             }
-            else if (potential.production == best_production) {
-                if (potential_distance < get_link_from_src_dest(source.id, destination.id, factory_links).value_or(bad).distance )
-                {
-                    best_production = potential.production;
-                    destination = potential;
-                }
-            }
-            if (potential.production > best_production) {
-                best_production = potential.production;
-                destination = potential;
-            }
-
-
-            //BEST DOESN'T HANDLE IF TARGET IS CONNECTED TO LAST ENEMY LOCATION
         }
 
 
         // Any valid action, such as "WAIT" or "MOVE source destination cyborgs"
         if ((source.cyborgs < 5) || (destination.production == -1))
-            cout << "WAIT";
             //See if we can upgrade any factories rather than waste a turn waiting. 
+            cout << "WAIT";
+        //Would be nice to find a better use for the 20 cyborgs... capture un leveled neutral probably.
         else if (source.cyborgs > 20) {
             cout << "MOVE " << source.id << " " << destination.id << " " << floor(source.cyborgs *.80);
         }
